@@ -424,8 +424,10 @@ class EnigmaService {
 				$db->query('SELECT `device_id` FROM `enigma2_devices` WHERE `user_id` = ?;', $rEnigma['user']['id']);
 				$rCount += $db->num_rows();
 
-				if ($rCount == 0) {
+				if ($rCount == 0 && (!empty($rEnigma['user']['is_mag']) || !empty($rEnigma['user']['is_e2']))) {
 					LineService::deleteLineById($rEnigma['user']['id'], $rDeletePaired, $rCloseCons);
+				} elseif ($rCount == 0) {
+					LineService::updateLineSignal($rEnigma['user']['id']);
 				}
 			}
 		}

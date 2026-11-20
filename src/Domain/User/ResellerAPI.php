@@ -51,7 +51,7 @@ class ResellerAPI {
 	 * @return array Action result.
 	 */
 	public static function processData(string $rType, array $rData) {
-		$rArray = ['line' => ['edit', 'trial', 'bouquets_selected', 'bouquets_present', 'bouquet_order', 'pair_id', 'username', 'password', 'member_id', 'package', 'contact', 'telegram', 'reseller_notes', 'allowed_ips', 'allowed_ua', 'bypass_ua', 'is_isplock', 'isp_clear', 'category_template_id'], 'mag' => ['ua_policy_present', 'lock_user_agent', 'allowed_user_agents', 'edit', 'trial', 'bouquets_selected', 'bouquets_present', 'bouquet_order', 'pair_id', 'mac', 'member_id', 'package', 'parent_password', 'sn', 'stb_type', 'image_version', 'hw_version', 'device_id', 'device_id2', 'ver', 'telegram', 'reseller_notes', 'allowed_ips', 'is_isplock', 'isp_clear', 'category_template_id'], 'enigma' => ['edit', 'trial', 'bouquets_selected', 'bouquets_present', 'bouquet_order', 'pair_id', 'mac', 'member_id', 'package', 'modem_mac', 'local_ip', 'enigma_version', 'cpu', 'lversion', 'token', 'telegram', 'reseller_notes', 'allowed_ips', 'is_isplock', 'isp_clear'], 'user' => ['edit', 'username', 'password', 'owner_id', 'email', 'reseller_dns', 'notes', 'member_group_id'], 'ticket' => ['edit', 'message', 'title', 'respond'], 'profile' => ['email', 'password', 'api_key', 'reseller_dns', 'theme', 'hue', 'timezone', 'lang']];
+		$rArray = ['line' => ['edit', 'trial', 'bouquets_selected', 'bouquets_present', 'bouquet_order', 'pair_id', 'username', 'password', 'member_id', 'package', 'contact', 'telegram', 'reseller_notes', 'allowed_ips', 'allowed_ua', 'bypass_ua', 'is_isplock', 'isp_clear', 'category_template_id'], 'mag' => ['ua_policy_present', 'lock_user_agent', 'allowed_user_agents', 'edit', 'trial', 'bouquets_selected', 'bouquets_present', 'bouquet_order', 'pair_id', 'mac', 'user_id', 'member_id', 'package', 'parent_password', 'sn', 'stb_type', 'image_version', 'hw_version', 'device_id', 'device_id2', 'ver', 'telegram', 'reseller_notes', 'allowed_ips', 'is_isplock', 'isp_clear', 'category_template_id'], 'enigma' => ['edit', 'trial', 'bouquets_selected', 'bouquets_present', 'bouquet_order', 'pair_id', 'mac', 'user_id', 'member_id', 'package', 'modem_mac', 'local_ip', 'enigma_version', 'cpu', 'lversion', 'token', 'telegram', 'reseller_notes', 'allowed_ips', 'is_isplock', 'isp_clear'], 'user' => ['edit', 'username', 'password', 'owner_id', 'email', 'reseller_dns', 'notes', 'member_group_id'], 'ticket' => ['edit', 'message', 'title', 'respond'], 'profile' => ['email', 'password', 'api_key', 'reseller_dns', 'theme', 'hue', 'timezone', 'lang']];
 
 		foreach ($rData as $rKey => $rValue) {
 			if (!in_array($rKey, $rArray[$rType])) {
@@ -234,6 +234,12 @@ class ResellerAPI {
 		$rData = self::processData('mag', $rData);
 
 		if (self::$rPermissions['create_mag']) {
+			if (!isset($rData['edit'])) {
+				$rLinked = self::linkDeviceToLine('mag', $rData);
+				if ($rLinked !== null) {
+					return $rLinked;
+				}
+			}
 			if (isset($rData['edit'])) {
 				$rArray = MagService::getById($rData['edit']);
 
@@ -550,6 +556,12 @@ class ResellerAPI {
 		$rData = self::processData('enigma', $rData);
 
 		if (self::$rPermissions['create_enigma']) {
+			if (!isset($rData['edit'])) {
+				$rLinked = self::linkDeviceToLine('e2', $rData);
+				if ($rLinked !== null) {
+					return $rLinked;
+				}
+			}
 			if (isset($rData['edit'])) {
 				$rArray = EnigmaService::getById($rData['edit']);
 
@@ -1380,6 +1392,133 @@ class ResellerAPI {
 		$rAmount = round(floatval($rStored), 4);
 
 		return ($rAmount == intval($rAmount) ? intval($rAmount) : $rAmount);
+	}
+
+	/**
+	 * Register a MAC on a line this reseller already owns.
+	 *
+	 * A package on a new device buys a second line. Naming user_id keeps the
+	 * line, its expiry, and its credits, and only adds the device row.
+	 *
+	 * @param string $rKind mag|e2
+	 * @param array  $rData Filtered request.
+	 * @return array|null Null when this is a normal package create.
+	 */
+	private static function linkDeviceToLine(string $rKind, array $rData): ?array {
+		if (!isset($rData['user_id']) || $rData['user_id'] === '' || $rData['user_id'] === null) {
+			return null;
+		}
+
+		$rLineId = intval($rData['user_id']);
+		if ($rLineId < 1 || !Authorization::check('line', $rLineId)) {
+			return ['status' => STATUS_FAILURE, 'error' => 'This line is not available.'];
+		}
+
+		if (!filter_var($rData['mac'] ?? '', FILTER_VALIDATE_MAC)) {
+			return ['status' => STATUS_INVALID_MAC, 'data' => $rData];
+		}
+
+		$rLine = UserRepository::getLineById($rLineId);
+		if (!$rLine) {
+			return ['status' => STATUS_FAILURE, 'error' => 'This line is not available.'];
+		}
+
+		$rMag = $rKind !== 'e2';
+		if ($rMag && !empty($rLine['is_e2'])) {
+			return ['status' => STATUS_INVALID_TYPE, 'data' => $rData];
+		}
+		if (!$rMag && !empty($rLine['is_mag'])) {
+			return ['status' => STATUS_INVALID_TYPE, 'data' => $rData];
+		}
+
+		$db = self::db();
+		$rTable = $rMag ? 'mag_devices' : 'enigma2_devices';
+		$rIdCol = $rMag ? 'mag_id' : 'device_id';
+		$db->query('SELECT `' . $rIdCol . '` AS `id`, `mac` FROM `' . $rTable . '` WHERE `user_id` = ? LIMIT 1;', $rLineId);
+		if (0 < $db->num_rows()) {
+			$rRow = $db->get_row();
+			if (self::sameMac($rRow['mac'], $rData['mac'])) {
+				return ['status' => STATUS_SUCCESS, 'data' => ['insert_id' => (int) $rRow['id']]];
+			}
+			$rLabel = $rMag ? 'MAG' : 'Enigma2';
+			return ['status' => STATUS_FAILURE, 'error' => 'This line already has a ' . $rLabel . ' device.'];
+		}
+
+		foreach (self::macForms($rData['mac']) as $rForm) {
+			$db->query('SELECT `' . $rIdCol . '` FROM `' . $rTable . '` WHERE `mac` = ? LIMIT 1;', $rForm);
+			if (0 < $db->num_rows()) {
+				return ['status' => STATUS_EXISTS_MAC, 'data' => $rData];
+			}
+		}
+
+		$rArray = QueryHelper::verifyPostTable($rTable, $rData);
+		unset($rArray[$rIdCol], $rArray['user'], $rArray['paired']);
+		$rArray['user_id'] = $rLineId;
+		$rArray['mac'] = $rData['mac'];
+		if ($rMag) {
+			$rArray['theme_type'] = self::$rSettings['mag_default_type'];
+			$rArray['ver'] = '';
+			$rArray['device_id2'] = '';
+			$rArray['device_id'] = '';
+			$rArray['hw_version'] = '';
+			$rArray['stb_type'] = '';
+			$rArray['image_version'] = '';
+			$rArray['sn'] = '';
+		} else {
+			$rArray['token'] = '';
+			$rArray['lversion'] = '';
+			$rArray['cpu'] = '';
+			$rArray['enigma_version'] = '';
+			$rArray['local_ip'] = '';
+			$rArray['modem_mac'] = '';
+		}
+
+		$rPrepare = QueryHelper::prepareArray($rArray);
+		$rQuery = 'REPLACE INTO `' . $rTable . '`(' . $rPrepare['columns'] . ') VALUES(' . $rPrepare['placeholder'] . ');';
+		if (!$db->query($rQuery, ...$rPrepare['data'])) {
+			return ['status' => STATUS_FAILURE, 'data' => $rData];
+		}
+
+		$rInsertID = (int) $db->last_insert_id();
+		SignalDispatcher::cache(intval(SERVER_ID), ['type' => 'update_line', 'id' => $rLineId], false, false, $db);
+		$rLogType = $rMag ? 'mag' : 'enigma';
+		$rSaved = $rMag ? MagService::getById($rInsertID) : EnigmaService::getById($rInsertID);
+		$db->query("INSERT INTO `users_logs`(`owner`, `type`, `action`, `log_id`, `package_id`, `cost`, `credits_after`, `date`, `deleted_info`) VALUES(?, ?, 'new', ?, null, 0, ?, ?, ?);", self::$rUserInfo['id'], $rLogType, $rInsertID, self::$rUserInfo['credits'], time(), json_encode($rSaved));
+
+		return ['status' => STATUS_SUCCESS, 'data' => ['insert_id' => $rInsertID]];
+	}
+
+	/**
+	 * @param mixed $rLeft
+	 * @param mixed $rRight
+	 */
+	private static function sameMac(mixed $rLeft, mixed $rRight): bool {
+		$rNorm = static function (mixed $rValue): string {
+			$rValue = trim((string) $rValue);
+			$rDecoded = base64_decode($rValue, true);
+			if (is_string($rDecoded) && filter_var($rDecoded, FILTER_VALIDATE_MAC)) {
+				$rValue = $rDecoded;
+			}
+			return strtoupper((string) preg_replace('/[^A-F0-9]/', '', $rValue));
+		};
+		$rA = $rNorm($rLeft);
+		$rB = $rNorm($rRight);
+		return strlen($rA) === 12 && $rA === $rB;
+	}
+
+	/**
+	 * @param string $rMac
+	 * @return string[]
+	 */
+	private static function macForms(string $rMac): array {
+		$rLower = strtolower($rMac);
+		return array_values(array_unique([
+			$rMac,
+			$rLower,
+			strtoupper($rMac),
+			base64_encode($rMac),
+			base64_encode($rLower),
+		]));
 	}
 
 	/**

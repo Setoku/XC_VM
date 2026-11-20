@@ -524,8 +524,10 @@ class MagService {
 				$db->query('SELECT `device_id` FROM `enigma2_devices` WHERE `user_id` = ?;', $rMag['user']['id']);
 				$rCount += $db->num_rows();
 
-				if ($rCount == 0) {
+				if ($rCount == 0 && (!empty($rMag['user']['is_mag']) || !empty($rMag['user']['is_e2']))) {
 					LineService::deleteLineById($rMag['user']['id'], $rDeletePaired, $rCloseCons);
+				} elseif ($rCount == 0) {
+					LineService::updateLineSignal($rMag['user']['id']);
 				}
 			}
 		}
